@@ -17,13 +17,15 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertCircle, CheckCircle2, Loader2, HelpCircle } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { db, storage } from "@/config/firebase";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc } from "firebase/firestore";
 import { useAuth } from "@/hooks/use-auth";
+import { validateContent } from "@/ai/flows/content-moderation";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ACCEPTED_FILE_TYPES = ["image/jpeg", "image/png", "image/webp", "video/mp4", "application/pdf"];
@@ -46,11 +48,15 @@ const formSchema = z.object({
 
 type FormData = z.infer<typeof formSchema>;
 
+type ModerationStatus = "pending" | "approved" | "rejected" | null;
+
 export function UploadForm() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
+  const [moderationStatus, setModerationStatus] = useState<ModerationStatus>(null);
+  const [moderationReason, setModerationReason] = useState("");
+  const [lastDocId, setLastDocId] = useState<string | null>(null);
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -60,6 +66,20 @@ export function UploadForm() {
       isPaid: false,
     },
   });
+
+  useEffect(() => {
+    if (!lastDocId) return;
+
+    const unsubscribe = onSnapshot(doc(db, "content", lastDocId), (doc) => {
+      const data = doc.data();
+      if (data && data.status) {
+        setModerationStatus(data.status);
+        setModerationReason(data.reason || "");
+      }
+    });
+
+    return () => unsubscribe();
+  }, [lastDocId]);
 
   async function onSubmit(values: FormData) {
     if (!user) {
@@ -72,7 +92,9 @@ export function UploadForm() {
     }
 
     setIsLoading(true);
-    setIsSuccess(false);
+    setModerationStatus("pending");
+    setModerationReason("");
+    setLastDocId(null);
 
     try {
       // 1. Upload file to Firebase Storage
@@ -82,34 +104,90 @@ export function UploadForm() {
       const downloadURL = await getDownloadURL(snapshot.ref);
 
       // 2. Create document in Firestore
-      await addDoc(collection(db, "content"), {
+      const docRef = await addDoc(collection(db, "content"), {
         title: values.title,
         description: values.description,
         isPaid: values.isPaid,
         fileUrl: downloadURL,
+        fileType: file.type,
         ownerId: user.uid,
         createdAt: serverTimestamp(),
         status: "pending",
       });
+      
+      setLastDocId(docRef.id);
+      
+      // 3. Start AI content moderation
+      const moderationResult = await validateContent({
+        title: values.title,
+        description: values.description,
+        fileType: file.type,
+      });
 
-      setIsSuccess(true);
+      // 4. Update Firestore document with moderation result
+      const newStatus = moderationResult.isEducational ? "approved" : "rejected";
+      await updateDoc(docRef, {
+        status: newStatus,
+        reason: moderationResult.reason,
+      });
+      
       toast({
         title: "Upload Successful!",
-        description: "Your content has been uploaded and is pending review.",
+        description: "Your content has been uploaded and moderated.",
       });
       form.reset();
 
     } catch (error) {
       console.error("Upload process failed:", error);
+      setModerationStatus(null);
       toast({
         title: "An Error Occurred",
-        description: "Something went wrong. Please try again.",
+        description: "Something went wrong during the upload or moderation process. Please try again.",
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
     }
   }
+
+  const renderStatusAlert = () => {
+    if (!moderationStatus) return null;
+
+    switch (moderationStatus) {
+      case "pending":
+        return (
+          <Alert>
+             <HelpCircle className="h-4 w-4" />
+            <AlertTitle>Moderation in Progress</AlertTitle>
+            <AlertDescription>
+              Our AI is currently reviewing your content. Please wait a moment.
+            </AlertDescription>
+          </Alert>
+        );
+      case "approved":
+        return (
+          <Alert variant="default" className="border-green-500 text-green-700 dark:border-green-600 dark:text-green-400">
+            <CheckCircle2 className="h-4 w-4 text-green-500 dark:text-green-600" />
+            <AlertTitle>Content Approved!</AlertTitle>
+            <AlertDescription>
+              {moderationReason || "Your content meets our guidelines and has been approved."}
+            </AlertDescription>
+          </Alert>
+        );
+      case "rejected":
+        return (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Content Rejected</AlertTitle>
+            <AlertDescription>
+              {moderationReason || "Your content does not meet our educational guidelines."}
+            </AlertDescription>
+          </Alert>
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <Card>
@@ -200,16 +278,15 @@ export function UploadForm() {
                 </FormItem>
               )}
             />
-             <Button type="submit" disabled={isLoading} className="w-full sm:w-auto">
+             <Button type="submit" disabled={isLoading || moderationStatus === 'pending'} className="w-full sm:w-auto">
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isLoading ? "Uploading..." : "Upload Content"}
+              {isLoading ? "Uploading..." : "Upload & Moderate Content"}
             </Button>
           </form>
         </Form>
-        {isSuccess && (
-          <div className="mt-8 rounded-lg border bg-secondary/50 p-4">
-            <h3 className="mb-3 font-semibold">Content Uploaded!</h3>
-            <p className="text-sm text-muted-foreground">Your content has been submitted successfully and is now waiting for approval.</p>
+        {lastDocId && (
+          <div className="mt-8">
+            {renderStatusAlert()}
           </div>
         )}
       </CardContent>
