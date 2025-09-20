@@ -18,10 +18,27 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   const handleGoogleSignIn = async () => {
+    setIsGoogleLoading(true);
     try {
-      await signInWithPopup(auth, googleProvider);
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      
+      // Ensure user document exists
+      await fetch('/api/user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          uid: user.uid, 
+          email: user.email,
+          displayName: user.displayName,
+        }),
+      });
+
       router.push("/");
     } catch (error) {
       console.error(error);
@@ -30,6 +47,8 @@ export default function SignupPage() {
         description: "Could not sign in with Google. Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setIsGoogleLoading(false);
     }
   };
 
@@ -37,7 +56,22 @@ export default function SignupPage() {
     e.preventDefault();
     setIsLoading(true);
     try {
-      await createUserWithEmailAndPassword(auth, email, password);
+      const result = await createUserWithEmailAndPassword(auth, email, password);
+      const user = result.user;
+
+      // Create user document in Firestore
+      await fetch('/api/user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          uid: user.uid, 
+          email: user.email,
+          displayName: user.displayName,
+        }),
+      });
+
       router.push("/");
     } catch (error: any) {
       toast({
@@ -72,7 +106,7 @@ export default function SignupPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              disabled={isLoading}
+              disabled={isLoading || isGoogleLoading}
             />
           </div>
           <div className="grid gap-2">
@@ -84,10 +118,10 @@ export default function SignupPage() {
               minLength={6}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              disabled={isLoading}
+              disabled={isLoading || isGoogleLoading}
             />
           </div>
-          <Button type="submit" className="w-full" disabled={isLoading}>
+          <Button type="submit" className="w-full" disabled={isLoading || isGoogleLoading}>
             {isLoading ? "Creating Account..." : "Create Account"}
           </Button>
         </form>
@@ -101,8 +135,8 @@ export default function SignupPage() {
             </span>
           </div>
         </div>
-        <Button variant="outline" className="w-full" onClick={handleGoogleSignIn}>
-          Google
+        <Button variant="outline" className="w-full" onClick={handleGoogleSignIn} disabled={isLoading || isGoogleLoading}>
+          {isGoogleLoading ? "Signing up..." : "Google"}
         </Button>
         <div className="mt-4 text-center text-sm">
           Already have an account?{" "}

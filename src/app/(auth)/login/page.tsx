@@ -18,10 +18,27 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   const handleGoogleSignIn = async () => {
+    setIsGoogleLoading(true);
     try {
-      await signInWithPopup(auth, googleProvider);
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      
+      // Ensure user document exists
+      await fetch('/api/user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          uid: user.uid, 
+          email: user.email,
+          displayName: user.displayName,
+        }),
+      });
+
       router.push("/");
     } catch (error) {
       console.error(error);
@@ -30,6 +47,8 @@ export default function LoginPage() {
         description: "Could not sign in with Google. Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setIsGoogleLoading(false);
     }
   };
 
@@ -72,7 +91,7 @@ export default function LoginPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              disabled={isLoading}
+              disabled={isLoading || isGoogleLoading}
             />
           </div>
           <div className="grid gap-2">
@@ -83,10 +102,10 @@ export default function LoginPage() {
               required 
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              disabled={isLoading}
+              disabled={isLoading || isGoogleLoading}
             />
           </div>
-          <Button type="submit" className="w-full" disabled={isLoading}>
+          <Button type="submit" className="w-full" disabled={isLoading || isGoogleLoading}>
             {isLoading ? "Logging in..." : "Login"}
           </Button>
         </form>
@@ -100,8 +119,8 @@ export default function LoginPage() {
             </span>
           </div>
         </div>
-        <Button variant="outline" className="w-full" onClick={handleGoogleSignIn}>
-          Google
+        <Button variant="outline" className="w-full" onClick={handleGoogleSignIn} disabled={isLoading || isGoogleLoading}>
+          {isGoogleLoading ? "Signing in..." : "Google"}
         </Button>
         <div className="mt-4 text-center text-sm">
           Don&apos;t have an account?{" "}
