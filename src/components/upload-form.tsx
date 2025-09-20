@@ -349,7 +349,7 @@ export function UploadForm() {
                 <FormItem>
                     <FormLabel>Tags</FormLabel>
                     <FormControl>
-                    <>
+                    <div>
                         <Input
                         placeholder="Add up to 5 tags..."
                         value={tagInput}
@@ -372,7 +372,7 @@ export function UploadForm() {
                             </Badge>
                         ))}
                         </div>
-                    </>
+                    </div>
                     </FormControl>
                     <FormDescription>
                     Press Enter to add a tag. Helps users discover your content.
