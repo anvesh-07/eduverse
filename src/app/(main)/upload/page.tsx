@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useAuth } from "@/hooks/use-auth";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { generateTags } from "@/ai/flows/auto-tagging";
 
 export default function UploadPage() {
   const { user } = useAuth();

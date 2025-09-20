@@ -17,16 +17,18 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, Loader2, HelpCircle, UploadCloud, ShieldCheck } from "lucide-react";
+import { KeyboardEvent, useEffect, useState } from "react";
+import { AlertCircle, CheckCircle2, Loader2, UploadCloud, ShieldCheck, X } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { db, storage } from "@/config/firebase";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
-import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc } from "firebase/firestore";
+import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc, writeBatch, query, where, getDocs } from "firebase/firestore";
 import { useAuth } from "@/hooks/use-auth";
 import { validateContent } from "@/ai/flows/content-moderation";
+import { generateTags } from "@/ai/flows/auto-tagging";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ACCEPTED_FILE_TYPES = ["image/jpeg", "image/png", "image/webp", "video/mp4", "application/pdf"];
@@ -45,25 +47,32 @@ const formSchema = z.object({
       "Only .jpg, .png, .webp, .mp4 and .pdf files are accepted."
     ),
   isPaid: z.boolean().default(false),
+  tags: z.array(z.string()).max(5, "You can add a maximum of 5 tags.").optional(),
 });
 
 type FormData = z.infer<typeof formSchema>;
 
 type ModerationStatus = "pending" | "approved" | "rejected" | null;
-type UploadStage = "idle" | "uploading" | "verifying" | "completed";
+type UploadStage = "idle" | "uploading" | "verifying" | "tagging" | "completed";
 
 const stageDetails = {
   uploading: {
     icon: UploadCloud,
     title: "Uploading Content",
     description: "Your file is being uploaded to our servers. Please wait.",
-    progress: 33,
+    progress: 25,
   },
   verifying: {
     icon: ShieldCheck,
     title: "Verifying Content",
     description: "Our AI is analyzing your content to ensure it's educational.",
-    progress: 66,
+    progress: 50,
+  },
+  tagging: {
+    icon: ShieldCheck,
+    title: "Generating Tags",
+    description: "Our AI is generating relevant tags for your content.",
+    progress: 75,
   },
   completed: {
     icon: CheckCircle2,
@@ -81,7 +90,8 @@ export function UploadForm() {
   const [moderationReason, setModerationReason] = useState("");
   const [lastDocId, setLastDocId] = useState<string | null>(null);
   const [uploadStage, setUploadStage] = useState<UploadStage>("idle");
-
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState("");
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -89,9 +99,14 @@ export function UploadForm() {
       title: "",
       description: "",
       isPaid: false,
+      tags: [],
     },
   });
 
+  useEffect(() => {
+    form.setValue("tags", tags);
+  }, [tags, form]);
+  
   useEffect(() => {
     if (!lastDocId) return;
 
@@ -100,12 +115,30 @@ export function UploadForm() {
       if (data && data.status && data.status !== 'pending') {
         setModerationStatus(data.status);
         setModerationReason(data.reason || "");
-        setUploadStage("completed");
+        if(uploadStage === 'tagging') {
+          setUploadStage("completed");
+        }
       }
     });
 
     return () => unsubscribe();
-  }, [lastDocId]);
+  }, [lastDocId, uploadStage]);
+
+  const handleTagInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const newTag = tagInput.trim();
+      if (newTag && !tags.includes(newTag) && tags.length < 5) {
+        setTags([...tags, newTag]);
+        setTagInput("");
+      }
+    }
+  };
+
+  const removeTag = (tagToRemove: string) => {
+    setTags(tags.filter(tag => tag !== tagToRemove));
+  };
+
 
   async function onSubmit(values: FormData) {
     if (!user) {
@@ -141,6 +174,7 @@ export function UploadForm() {
         ownerId: user.uid,
         createdAt: serverTimestamp(),
         status: "pending",
+        tags: [], // Initially empty
       });
       
       setLastDocId(docRef.id);
@@ -153,18 +187,51 @@ export function UploadForm() {
         fileType: file.type,
       });
 
-      // 4. Update Firestore document with moderation result
       const newStatus = moderationResult.isEducational ? "approved" : "rejected";
-      await updateDoc(docRef, {
+      
+      // If rejected, update status and stop.
+      if (newStatus === 'rejected') {
+        await updateDoc(docRef, {
+          status: 'rejected',
+          reason: moderationResult.reason,
+        });
+        setUploadStage('completed');
+        toast({
+          title: "Content Rejected",
+          description: "Your content could not be approved.",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      // 4. Generate AI tags if approved
+      setUploadStage("tagging");
+      const tagResult = await generateTags({
+        title: values.title,
+        description: values.description,
+        contentType: file.type.split('/')[0] as 'text' | 'image' | 'video'
+      });
+      
+      const userTags = values.tags || [];
+      const combinedTags = [...new Set([...userTags, ...tagResult.tags].map(t => t.toLowerCase()))];
+
+      // 5. Update Firestore with tags using a batch write
+      const batch = writeBatch(db);
+      
+      batch.update(docRef, {
         status: newStatus,
         reason: moderationResult.reason,
+        tags: combinedTags,
       });
+
+      await batch.commit();
       
       toast({
         title: "Upload Successful!",
         description: "Your content has been uploaded and moderated.",
       });
       form.reset();
+      setTags([]);
 
     } catch (error) {
       console.error("Upload process failed:", error);
@@ -274,6 +341,45 @@ export function UploadForm() {
                   <FormMessage />
                 </FormItem>
               )}
+            />
+             <FormField
+                control={form.control}
+                name="tags"
+                render={() => (
+                <FormItem>
+                    <FormLabel>Tags</FormLabel>
+                    <FormControl>
+                    <>
+                        <Input
+                        placeholder="Add up to 5 tags..."
+                        value={tagInput}
+                        onChange={(e) => setTagInput(e.target.value)}
+                        onKeyDown={handleTagInputKeyDown}
+                        disabled={tags.length >= 5}
+                        />
+                        <div className="mt-2 flex flex-wrap gap-2">
+                        {tags.map((tag) => (
+                            <Badge key={tag} variant="secondary">
+                            {tag}
+                            <button
+                                type="button"
+                                className="ml-2 rounded-full outline-none ring-offset-background focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                                onClick={() => removeTag(tag)}
+                            >
+                                <X className="h-3 w-3" />
+                                <span className="sr-only">Remove {tag}</span>
+                            </button>
+                            </Badge>
+                        ))}
+                        </div>
+                    </>
+                    </FormControl>
+                    <FormDescription>
+                    Press Enter to add a tag. Helps users discover your content.
+                    </FormDescription>
+                    <FormMessage />
+                </FormItem>
+                )}
             />
             <FormField
               control={form.control}
