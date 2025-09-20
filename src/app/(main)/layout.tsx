@@ -12,12 +12,16 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
+  SidebarSeparator,
+  SidebarGroup,
+  SidebarGroupLabel,
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/hooks/use-auth";
 import { Home, PlusSquare, Tags, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { MyContentList } from "@/components/my-content-list";
 
 const navItems = [
   { href: "/", label: "Home", icon: Home },
@@ -55,6 +59,17 @@ export default function MainLayout({ children }: { children: ReactNode }) {
               </SidebarMenuItem>
             ))}
           </SidebarMenu>
+          {user && (
+            <>
+              <SidebarSeparator />
+              <SidebarGroup>
+                <SidebarGroupLabel>My Content</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <MyContentList />
+                </SidebarGroupContent>
+              </SidebarGroup>
+            </>
+          )}
         </SidebarContent>
       </Sidebar>
       <SidebarInset>
