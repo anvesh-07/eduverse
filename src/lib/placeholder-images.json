@@ -1,3 +1,40 @@
 {
-  "placeholderImages": []
+  "placeholderImages": [
+    {
+      "id": "1",
+      "description": "A computer screen with Python code.",
+      "imageUrl": "https://picsum.photos/seed/python/600/400",
+      "imageHint": "python code"
+    },
+    {
+      "id": "2",
+      "description": "The Roman Colosseum under a blue sky.",
+      "imageUrl": "https://picsum.photos/seed/rome/600/400",
+      "imageHint": "roman colosseum"
+    },
+    {
+      "id": "3",
+      "description": "A wind turbine against a sunset.",
+      "imageUrl": "https://picsum.photos/seed/climate/600/400",
+      "imageHint": "wind turbine"
+    },
+    {
+      "id": "4",
+      "description": "A designer's desk with a tablet showing color palettes.",
+      "imageUrl": "https://picsum.photos/seed/design/600/400",
+      "imageHint": "graphic design"
+    },
+    {
+      "id": "5",
+      "description": "Abstract visualization of a neural network.",
+      "imageUrl": "https://picsum.photos/seed/ml/600/400",
+      "imageHint": "neural network"
+    },
+    {
+      "id": "6",
+      "description": "A person writing in a notebook with a fountain pen.",
+      "imageUrl": "https://picsum.photos/seed/writing/600/400",
+      "imageHint": "creative writing"
+    }
+  ]
 }
