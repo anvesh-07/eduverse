@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { doc, getDoc, DocumentData } from "firebase/firestore";
 import { db } from "@/config/firebase";
-import { notFound } from "next/navigation";
+import { notFound, useParams } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -23,18 +23,20 @@ interface ContentData {
   status?: string;
 }
 
-export default function ContentPage({ params }: { params: { id: string } }) {
+export default function ContentPage() {
+  const params = useParams();
+  const id = Array.isArray(params.id) ? params.id[0] : params.id;
   const { user } = useAuth();
   const [content, setContent] = useState<ContentData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!params.id) return;
+    if (!id) return;
 
     const fetchContent = async () => {
       try {
-        const docRef = doc(db, "content", params.id);
+        const docRef = doc(db, "content", id);
         const docSnap = await getDoc(docRef);
 
         if (docSnap.exists()) {
@@ -56,7 +58,7 @@ export default function ContentPage({ params }: { params: { id: string } }) {
     };
 
     fetchContent();
-  }, [params.id]);
+  }, [id]);
 
   if (loading) {
     return (
