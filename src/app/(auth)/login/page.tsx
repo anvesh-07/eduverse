@@ -40,7 +40,11 @@ export default function LoginPage() {
       });
 
       router.push("/");
-    } catch (error) {
+    } catch (error: any) {
+      if (error.code === 'auth/popup-closed-by-user') {
+        console.log("Sign-in popup closed by user.");
+        return;
+      }
       console.error(error);
       toast({
         title: "Error",

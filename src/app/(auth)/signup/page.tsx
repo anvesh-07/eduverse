@@ -40,7 +40,11 @@ export default function SignupPage() {
       });
 
       router.push("/");
-    } catch (error) {
+    } catch (error: any) {
+      if (error.code === 'auth/popup-closed-by-user') {
+        console.log("Sign-up popup closed by user.");
+        return;
+      }
       console.error(error);
       toast({
         title: "Error",
