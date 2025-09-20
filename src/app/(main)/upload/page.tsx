@@ -39,7 +39,7 @@ export default function UploadPage() {
       <div className="p-4 pt-0 sm:p-6 sm:pt-0 lg:p-8 lg:pt-0">
         <div className="mx-auto max-w-3xl">
           <p className="mb-6 text-muted-foreground">
-            Share your knowledge with the world. Fill out the form below to upload your educational content. Our AI will automatically review it for appropriateness and generate relevant tags to help others discover it.
+            Share your knowledge with the world. Fill out the form below to upload your educational content. Your content will be reviewed before it's published.
           </p>
           <UploadForm />
         </div>

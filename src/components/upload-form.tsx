@@ -13,22 +13,20 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
-import { validateContent } from "@/ai/flows/content-moderation";
-import { generateTags } from "@/ai/flows/auto-tagging";
 import { useToast } from "@/hooks/use-toast";
 import { useState } from "react";
-import { Badge } from "./ui/badge";
 import { Loader2 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { db, storage } from "@/config/firebase";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { useAuth } from "@/hooks/use-auth";
+
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const ACCEPTED_FILE_TYPES = ["image/jpeg", "image/png", "image/webp", "video/mp4", "application/pdf"];
 
 const formSchema = z.object({
   title: z.string().min(5, {
@@ -37,15 +35,21 @@ const formSchema = z.object({
   description: z.string().min(20, {
     message: "Description must be at least 20 characters.",
   }),
-  fileType: z.enum(["text", "image", "video", "pdf"]),
+  file: z.instanceof(File)
+    .refine((file) => file.size <= MAX_FILE_SIZE, `Max file size is 5MB.`)
+    .refine(
+      (file) => ACCEPTED_FILE_TYPES.includes(file.type),
+      "Only .jpg, .png, .webp, .mp4 and .pdf files are accepted."
+    ),
+  isPaid: z.boolean().default(false),
 });
 
 type FormData = z.infer<typeof formSchema>;
 
 export function UploadForm() {
+  const { user } = useAuth();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
-  const [generatedTags, setGeneratedTags] = useState<string[]>([]);
   const [isSuccess, setIsSuccess] = useState(false);
 
   const form = useForm<FormData>({
@@ -53,46 +57,45 @@ export function UploadForm() {
     defaultValues: {
       title: "",
       description: "",
-      fileType: "text",
+      isPaid: false,
     },
   });
 
   async function onSubmit(values: FormData) {
+    if (!user) {
+      toast({
+        title: "Authentication Error",
+        description: "You must be logged in to upload content.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsLoading(true);
-    setGeneratedTags([]);
     setIsSuccess(false);
 
     try {
-      // Step 1: Content Moderation
-      const moderationResult = await validateContent(values);
+      // 1. Upload file to Firebase Storage
+      const file = values.file;
+      const storageRef = ref(storage, `content-files/${Date.now()}_${file.name}`);
+      const snapshot = await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(snapshot.ref);
 
-      if (!moderationResult.isEducational) {
-        toast({
-          title: "Content Rejected",
-          description: `Reason: ${moderationResult.reason}. Please upload educational content only.`,
-          variant: "destructive",
-        });
-        setIsLoading(false);
-        return;
-      }
-
-      toast({
-        title: "Content Approved",
-        description: "Your content has been approved as educational.",
-      });
-
-      // Step 2: Auto-Tagging
-      const tagsResult = await generateTags({
+      // 2. Create document in Firestore
+      await addDoc(collection(db, "content"), {
         title: values.title,
         description: values.description,
-        contentType: values.fileType,
+        isPaid: values.isPaid,
+        fileUrl: downloadURL,
+        ownerId: user.uid,
+        createdAt: serverTimestamp(),
+        status: "pending",
       });
 
-      setGeneratedTags(tagsResult.tags);
       setIsSuccess(true);
       toast({
         title: "Upload Successful!",
-        description: "Your content has been moderated and tagged.",
+        description: "Your content has been uploaded and is pending review.",
       });
       form.reset();
 
@@ -151,42 +154,62 @@ export function UploadForm() {
             />
             <FormField
               control={form.control}
-              name="fileType"
-              render={({ field }) => (
+              name="file"
+              render={({ field: { onChange, value, ...rest } }) => (
                 <FormItem>
-                  <FormLabel>Content Type</FormLabel>
-                   <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a content type" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="text">Text</SelectItem>
-                      <SelectItem value="image">Image</SelectItem>
-                      <SelectItem value="video">Video</SelectItem>
-                      <SelectItem value="pdf">PDF</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <FormLabel>Content File</FormLabel>
+                  <FormControl>
+                    <Input 
+                      type="file" 
+                      accept={ACCEPTED_FILE_TYPES.join(",")}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          onChange(file);
+                        }
+                      }} 
+                      {...rest}
+                    />
+                  </FormControl>
                   <FormDescription>
-                    Choose the format of the content you are uploading.
+                    Upload your content file (image, video, or PDF). Max 5MB.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
+            <FormField
+              control={form.control}
+              name="isPaid"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-base">
+                      Paid Content
+                    </FormLabel>
+                    <FormDescription>
+                      Is this content behind a paywall?
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
              <Button type="submit" disabled={isLoading} className="w-full sm:w-auto">
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isLoading ? "Analyzing..." : "Upload & Process"}
+              {isLoading ? "Uploading..." : "Upload Content"}
             </Button>
           </form>
         </Form>
-        {isSuccess && generatedTags.length > 0 && (
+        {isSuccess && (
           <div className="mt-8 rounded-lg border bg-secondary/50 p-4">
-            <h3 className="mb-3 font-semibold">Successfully uploaded with AI-generated tags:</h3>
-            <div className="flex flex-wrap gap-2">
-              {generatedTags.map(tag => <Badge key={tag}>{tag}</Badge>)}
-            </div>
+            <h3 className="mb-3 font-semibold">Content Uploaded!</h3>
+            <p className="text-sm text-muted-foreground">Your content has been submitted successfully and is now waiting for approval.</p>
           </div>
         )}
       </CardContent>
