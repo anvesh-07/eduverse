@@ -18,11 +18,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { KeyboardEvent, useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, Loader2, UploadCloud, ShieldCheck, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, UploadCloud, ShieldCheck, X, Tags } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { db, storage } from "@/config/firebase";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
-import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc, writeBatch, query, where, getDocs } from "firebase/firestore";
+import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc, writeBatch } from "firebase/firestore";
 import { useAuth } from "@/hooks/use-auth";
 import { validateContent } from "@/ai/flows/content-moderation";
 import { generateTags } from "@/ai/flows/auto-tagging";
@@ -71,7 +71,7 @@ const stageDetails = {
     progress: 50,
   },
   tagging: {
-    icon: ShieldCheck,
+    icon: Tags,
     title: "Generating Tags",
     description: "Our AI is generating relevant tags for your content.",
     progress: 75,
@@ -182,7 +182,7 @@ export function UploadForm() {
         ownerId: user.uid,
         createdAt: serverTimestamp(),
         status: "pending",
-        tags: [], // Initially empty
+        tags: [],
       });
       
       setLastDocId(docRef.id);
@@ -220,14 +220,24 @@ export function UploadForm() {
       const userTags = values.tags || [];
       const combinedTags = [...new Set([...userTags, ...tagResult.tags].map(t => t.toLowerCase()))];
 
-      const batch = writeBatch(db);
-      
-      batch.update(docRef, {
+      // Update the content document with status, reason, and tags array
+      await updateDoc(docRef, {
         status: newStatus,
         reason: moderationResult.reason,
         tags: combinedTags,
       });
 
+      // Create bidirectional links using a batched write
+      const batch = writeBatch(db);
+      for (const tagName of combinedTags) {
+        // Ensure the main tag document exists
+        const tagDocRef = doc(db, "tags", tagName);
+        batch.set(tagDocRef, { name: tagName }, { merge: true });
+
+        // Create the link in the subcollection
+        const contentItemRef = doc(tagDocRef, "contentItems", docRef.id);
+        batch.set(contentItemRef, { createdAt: serverTimestamp() });
+      }
       await batch.commit();
       
       toast({
@@ -456,17 +466,3 @@ export function UploadForm() {
     </>
   );
 }
-
-// Helper to hide the close button on the dialog
-const DialogContentWithNoClose = React.forwardRef<
-  React.ElementRef<typeof DialogContent>,
-  React.ComponentPropsWithoutRef<typeof DialogContent> & { hideCloseButton?: boolean }
->(({ children, hideCloseButton, ...props }, ref) => {
-  return (
-    <DialogContent ref={ref} {...props}>
-      {children}
-      {hideCloseButton && <div />}
-    </DialogContent>
-  );
-});
-DialogContentWithNoClose.displayName = "DialogContentWithNoClose"
