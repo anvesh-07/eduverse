@@ -9,23 +9,24 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { Content } from "@/lib/data";
 
 export default function HomePage() {
-  const [content, setContent] = useState<Content[]>([]);
+  const [content, setContent] = useState<(Content & { fileType?: string; fileUrl?: string; id: string })[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const q = query(collection(db, "content"), where("status", "==", "approved"));
     
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const approvedContent: Content[] = [];
+      const approvedContent: (Content & { fileType?: string; fileUrl?: string; id: string })[] = [];
       querySnapshot.forEach((doc) => {
         const data = doc.data() as DocumentData;
         approvedContent.push({
           id: doc.id,
           title: data.title,
           description: data.description,
-          // Firestore data may not have imageId or tags, provide defaults
           imageId: data.imageId || "1", 
           tags: data.tags || [],
+          fileType: data.fileType,
+          fileUrl: data.fileUrl,
         });
       });
       setContent(approvedContent);
