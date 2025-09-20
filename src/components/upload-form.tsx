@@ -29,6 +29,8 @@ import { generateTags } from "@/ai/flows/auto-tagging";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
+import { useRouter } from "next/navigation";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const ACCEPTED_FILE_TYPES = ["image/jpeg", "image/png", "image/webp", "video/mp4", "application/pdf"];
@@ -85,6 +87,7 @@ const stageDetails = {
 export function UploadForm() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [moderationStatus, setModerationStatus] = useState<ModerationStatus>(null);
   const [moderationReason, setModerationReason] = useState("");
@@ -92,6 +95,7 @@ export function UploadForm() {
   const [uploadStage, setUploadStage] = useState<UploadStage>("idle");
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
+  const [isProgressDialogOpen, setIsProgressDialogOpen] = useState(false);
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -115,14 +119,18 @@ export function UploadForm() {
       if (data && data.status && data.status !== 'pending') {
         setModerationStatus(data.status);
         setModerationReason(data.reason || "");
-        if(uploadStage === 'tagging') {
+        if(uploadStage === 'tagging' || uploadStage === 'verifying') {
           setUploadStage("completed");
+          setTimeout(() => {
+            setIsProgressDialogOpen(false);
+            router.push('/');
+          }, 3000);
         }
       }
     });
 
     return () => unsubscribe();
-  }, [lastDocId, uploadStage]);
+  }, [lastDocId, uploadStage, router]);
 
   const handleTagInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -139,7 +147,6 @@ export function UploadForm() {
     setTags(tags.filter(tag => tag !== tagToRemove));
   };
 
-
   async function onSubmit(values: FormData) {
     if (!user) {
       toast({
@@ -155,6 +162,7 @@ export function UploadForm() {
     setModerationReason("");
     setLastDocId(null);
     setUploadStage("idle");
+    setIsProgressDialogOpen(true);
 
     try {
       // 1. Upload file to Firebase Storage
@@ -189,13 +197,11 @@ export function UploadForm() {
 
       const newStatus = moderationResult.isEducational ? "approved" : "rejected";
       
-      // If rejected, update status and stop.
       if (newStatus === 'rejected') {
         await updateDoc(docRef, {
           status: 'rejected',
           reason: moderationResult.reason,
         });
-        setUploadStage('completed');
         toast({
           title: "Content Rejected",
           description: "Your content could not be approved.",
@@ -204,7 +210,6 @@ export function UploadForm() {
         return;
       }
       
-      // 4. Generate AI tags if approved
       setUploadStage("tagging");
       const tagResult = await generateTags({
         title: values.title,
@@ -215,7 +220,6 @@ export function UploadForm() {
       const userTags = values.tags || [];
       const combinedTags = [...new Set([...userTags, ...tagResult.tags].map(t => t.toLowerCase()))];
 
-      // 5. Update Firestore with tags using a batch write
       const batch = writeBatch(db);
       
       batch.update(docRef, {
@@ -237,6 +241,7 @@ export function UploadForm() {
       console.error("Upload process failed:", error);
       setModerationStatus(null);
       setUploadStage("idle");
+      setIsProgressDialogOpen(false);
       toast({
         title: "An Error Occurred",
         description: "Something went wrong during the upload or moderation process. Please try again.",
@@ -283,160 +288,185 @@ export function UploadForm() {
     const Icon = currentStageDetails.icon;
 
     return (
-      <Card className="mt-8">
-        <CardContent className="p-6">
-          <div className="flex items-center space-x-4">
-            <div className="flex-shrink-0">
-              <Icon className="h-6 w-6 text-primary" />
-            </div>
-            <div className="flex-1">
-              <h3 className="text-base font-medium">{currentStageDetails.title}</h3>
-              <p className="text-sm text-muted-foreground">{currentStageDetails.description}</p>
-            </div>
+      <div className="p-6">
+        <div className="flex items-center space-x-4">
+          <div className="flex-shrink-0">
+            <Icon className="h-6 w-6 text-primary" />
           </div>
-          <Progress value={currentStageDetails.progress} className="mt-4" />
-          {uploadStage === "completed" && <div className="mt-4">{renderStatusAlert()}</div>}
-        </CardContent>
-      </Card>
+          <div className="flex-1">
+            <h3 className="text-base font-medium">{currentStageDetails.title}</h3>
+            <p className="text-sm text-muted-foreground">{currentStageDetails.description}</p>
+          </div>
+        </div>
+        <Progress value={currentStageDetails.progress} className="mt-4" />
+        {uploadStage === "completed" && <div className="mt-4">{renderStatusAlert()}</div>}
+      </div>
     );
   };
 
   return (
-    <Card>
-      <CardContent className="p-6">
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
-            <FormField
-              control={form.control}
-              name="title"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Title</FormLabel>
-                  <FormControl>
-                    <Input placeholder="e.g., Introduction to Quantum Physics" {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    A concise and descriptive title for your content.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="description"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Description</FormLabel>
-                  <FormControl>
-                    <Textarea
-                      placeholder="Provide a detailed summary of your educational content..."
-                      className="min-h-[120px]"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Explain what learners will get from your content.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-             <FormField
+    <>
+      <Card>
+        <CardContent className="p-6">
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+              <FormField
                 control={form.control}
-                name="tags"
-                render={() => (
-                <FormItem>
-                    <FormLabel>Tags</FormLabel>
+                name="title"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Title</FormLabel>
                     <FormControl>
-                    <div>
-                        <Input
-                        placeholder="Add up to 5 tags..."
-                        value={tagInput}
-                        onChange={(e) => setTagInput(e.target.value)}
-                        onKeyDown={handleTagInputKeyDown}
-                        disabled={tags.length >= 5}
-                        />
-                        <div className="mt-2 flex flex-wrap gap-2">
-                        {tags.map((tag) => (
-                            <Badge key={tag} variant="secondary">
-                            {tag}
-                            <button
-                                type="button"
-                                className="ml-2 rounded-full outline-none ring-offset-background focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                                onClick={() => removeTag(tag)}
-                            >
-                                <X className="h-3 w-3" />
-                                <span className="sr-only">Remove {tag}</span>
-                            </button>
-                            </Badge>
-                        ))}
-                        </div>
-                    </div>
+                      <Input placeholder="e.g., Introduction to Quantum Physics" {...field} />
                     </FormControl>
                     <FormDescription>
-                    Press Enter to add a tag. Helps users discover your content.
+                      A concise and descriptive title for your content.
                     </FormDescription>
                     <FormMessage />
-                </FormItem>
+                  </FormItem>
                 )}
-            />
-            <FormField
-              control={form.control}
-              name="file"
-              render={({ field: { onChange, value, ...rest } }) => (
-                <FormItem>
-                  <FormLabel>Content File</FormLabel>
-                  <FormControl>
-                    <Input 
-                      type="file" 
-                      accept={ACCEPTED_FILE_TYPES.join(",")}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          onChange(file);
-                        }
-                      }} 
-                      {...rest}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Upload your content file (image, video, or PDF). Max 5MB.
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="isPaid"
-              render={({ field }) => (
-                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                  <div className="space-y-0.5">
-                    <FormLabel className="text-base">
-                      Paid Content
-                    </FormLabel>
+              />
+              <FormField
+                control={form.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        placeholder="Provide a detailed summary of your educational content..."
+                        className="min-h-[120px]"
+                        {...field}
+                      />
+                    </FormControl>
                     <FormDescription>
-                      Is this content behind a paywall?
+                      Explain what learners will get from your content.
                     </FormDescription>
-                  </div>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-             <Button type="submit" disabled={isSubmitting} className="w-full sm:w-auto">
-              {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isSubmitting ? "Processing..." : "Upload & Moderate Content"}
-            </Button>
-          </form>
-        </Form>
-        {renderProgressIndicator()}
-      </CardContent>
-    </Card>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                  control={form.control}
+                  name="tags"
+                  render={() => (
+                  <FormItem>
+                      <FormLabel>Tags</FormLabel>
+                      <FormControl>
+                        <div>
+                          <Input
+                          placeholder="Add up to 5 tags..."
+                          value={tagInput}
+                          onChange={(e) => setTagInput(e.target.value)}
+                          onKeyDown={handleTagInputKeyDown}
+                          disabled={tags.length >= 5}
+                          />
+                          <div className="mt-2 flex flex-wrap gap-2">
+                          {tags.map((tag) => (
+                              <Badge key={tag} variant="secondary">
+                              {tag}
+                              <button
+                                  type="button"
+                                  className="ml-2 rounded-full outline-none ring-offset-background focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                                  onClick={() => removeTag(tag)}
+                              >
+                                  <X className="h-3 w-3" />
+                                  <span className="sr-only">Remove {tag}</span>
+                              </button>
+                              </Badge>
+                          ))}
+                          </div>
+                        </div>
+                      </FormControl>
+                      <FormDescription>
+                      Press Enter to add a tag. Helps users discover your content.
+                      </FormDescription>
+                      <FormMessage />
+                  </FormItem>
+                  )}
+              />
+              <FormField
+                control={form.control}
+                name="file"
+                render={({ field: { onChange, value, ...rest } }) => (
+                  <FormItem>
+                    <FormLabel>Content File</FormLabel>
+                    <FormControl>
+                      <Input 
+                        type="file" 
+                        accept={ACCEPTED_FILE_TYPES.join(",")}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            onChange(file);
+                          }
+                        }} 
+                        {...rest}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Upload your content file (image, video, or PDF). Max 5MB.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="isPaid"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-base">
+                        Paid Content
+                      </FormLabel>
+                      <FormDescription>
+                        Is this content behind a paywall?
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+              <Button type="submit" disabled={isSubmitting} className="w-full sm:w-auto">
+                {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {isSubmitting ? "Processing..." : "Upload & Moderate Content"}
+              </Button>
+            </form>
+          </Form>
+        </CardContent>
+      </Card>
+      
+      <Dialog open={isProgressDialogOpen} onOpenChange={setIsProgressDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]" hideCloseButton={true}>
+          <DialogHeader>
+            <DialogTitle>Content Processing</DialogTitle>
+            <DialogDescription>
+              Please wait while we process your content. This may take a moment.
+            </DialogDescription>
+          </DialogHeader>
+          {renderProgressIndicator()}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
+
+// Helper to hide the close button on the dialog
+const DialogContentWithNoClose = React.forwardRef<
+  React.ElementRef<typeof DialogContent>,
+  React.ComponentPropsWithoutRef<typeof DialogContent> & { hideCloseButton?: boolean }
+>(({ children, hideCloseButton, ...props }, ref) => {
+  return (
+    <DialogContent ref={ref} {...props}>
+      {children}
+      {hideCloseButton && <div />}
+    </DialogContent>
+  );
+});
+DialogContentWithNoClose.displayName = "DialogContentWithNoClose"
